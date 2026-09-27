@@ -1,0 +1,3 @@
+Pillow>=10.1
+# Optional fallback: imageio-ffmpeg
+# Optional speech: faster-whisper (or mlx-whisper on Apple Silicon)
