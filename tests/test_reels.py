@@ -5,12 +5,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "reel-maker" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 from common import job_path, digest, ffmpeg, read_json, run, write_json
 from render import layout, groups, text_png, DEFAULT_CONFIG, cleaned
 from transcribe import spread, subtitles
+from make_reels import main
 from verify import verify_job
 from PIL import Image
 
@@ -74,8 +76,11 @@ class EndToEnd(unittest.TestCase):
                 for t in range(0,90,5)))
             out = root/"output"
             command = [sys.executable,str(SCRIPTS/"make_reels.py"),"--video",str(video),"--transcript",str(vtt),"--count","2","--out",str(out)]
-            first = subprocess.run(command,capture_output=True,text=True)
-            self.assertEqual(first.returncode,2,first.stdout+first.stderr)
+            # Sine audio cannot pass speech validation; supply recognized words only
+            # at that boundary, retaining real extraction/render/verification below.
+            with patch("transcribe.recognize", return_value=spread(
+                    "These useful ideas help owners save time and grow steadily.", 0, 5)):
+                self.assertEqual(main(command[2:]), 2)
             moments = read_json(out/"moments.json")
             moments.update(offer="Synthetic fixture only",transcript_read_in_full=True)
             for i,m in enumerate(moments["candidates"]):

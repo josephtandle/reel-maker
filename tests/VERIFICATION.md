@@ -20,3 +20,13 @@ Limits: real Whisper inference/model downloads and the original Zoom recording w
 - Caption sync now scores matched non-filler words only. Tests cover excluded filler offsets, unmatched tokens, no-match review, and advisory alignment-share warnings in tests.md. Alignment share retains its separate all-caption-word denominator.
 - Added stamp/side-bar-label limitations and deleted the temporary renderer.
 - Verification uses an isolated temporary `.venv` with existing system packages; no network setup or real Whisper inference.
+
+## Clean-install regression fixes (2026-09-27)
+
+- `.venv/bin/python -m unittest discover -s tests`: 44 tests passed in 41.308 seconds. The venv uses already-installed system packages; no dependency/model download was performed.
+- `.venv/bin/python -m unittest discover -s tests -p test_install_regressions.py`: 14 tests passed after explicitly exercising the automatic short-video count.
+- `git diff --check`: passed.
+- Actual ffmpeg extraction, synthetic reel renders, re-rendering, and output verification ran. Transcript speech recognition uses deterministic stubs in the synthetic fixture; a sine tone is not evidence of natural speech quality.
+- Regression coverage includes unrelated filenames, time-local 40% overlap, both duration limits (including skipped cues), malformed sibling subtitles, forced transcription, invalid mlx word times, detailed validator errors, previous-word start bounds, immutable source words, repeatable candidate cuts/fades, sequential delivery naming, architecture defaults, and progress lifecycle/pip dispatch.
+- Existing discovery fixture now uses a matching video stem. Existing synthetic pipeline stubs only the new transcript audio recognition check; it retains all render and verification assertions.
+- No fresh-HOME GitHub installation or real mlx model run was attempted in the network-disabled execution envelope. This is implementation verification, not independent review.

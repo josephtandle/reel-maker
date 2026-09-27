@@ -9,7 +9,7 @@ from pathlib import Path
 import platform
 import sys
 import uuid
-from common import clean_output, job_path, desktop, digest, duration, read_json, write_json
+from common import default_backend, clean_output, job_path, desktop, digest, duration, read_json, write_json
 from contact_sheet import contact_sheet
 from render import DEFAULT_CONFIG, render
 from transcribe import indexed_transcript, transcribe
@@ -35,13 +35,17 @@ def validate_moments(data, words, length, count):
     # A transcript made from a longer, untrimmed recording may run past the end of this file.
     # Words that start after the source ends are unusable (never selectable) rather than fatal.
     usable = [w for w in words if math.isfinite(w["start"]) and w["start"] < length]
-    if not usable or any(not math.isfinite(w["end"]) or not 0 <= w["start"] < w["end"] for w in words):
-        raise ValueError("NEEDS_REVIEW: word timings must be finite and inside the source")
+    for i, word in enumerate(words):
+        if not all(math.isfinite(word[k]) for k in ("start", "end")) or not 0 <= word["start"] < word["end"]:
+            raise ValueError(f"NEEDS_REVIEW: word {i} ({word['text']!r}) timings start={word['start']}, end={word['end']} must be finite with 0 <= start < end")
+    if not usable:
+        raise ValueError(f"NEEDS_REVIEW: no words start inside the source ({length}s)")
     if len(usable) < len(words):
         print(f"Warning: {len(words)-len(usable)} transcript words fall after the video ends "
               f"({length:.1f}s); check the transcript matches this exact file.", flush=True)
-    if any(a["end"] > b["start"]+.001 for a,b in zip(words,words[1:])):
-        raise ValueError("NEEDS_REVIEW: word timings overlap")
+    for i, (a, b) in enumerate(zip(words, words[1:])):
+        if a["end"] > b["start"]+.001:
+            raise ValueError(f"NEEDS_REVIEW: word timings overlap at word {i+1}: start={b['start']}, end={b['end']}; previous end={a['end']}")
     candidates = data.get("candidates", [])
     if len(candidates) != 10:
         raise ValueError("NEEDS_REVIEW: score exactly 10 candidates")
@@ -84,11 +88,13 @@ def validate_moments(data, words, length, count):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--video", type=Path, required=True)
-    p.add_argument("--transcript", type=Path)
-    p.add_argument("--count", type=int, default=3, choices=range(2,6), help="3–5 normally; 2 for a small test")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--transcript", type=Path)
+    group.add_argument("--no-transcript", action="store_true", help="ignore supplied/discovered subtitles; transcribe audio")
+    p.add_argument("--count", type=int, default=None, choices=range(2,6), help="default: 2 below 5 minutes, otherwise 3")
     p.add_argument("--out", type=Path)
     p.add_argument("--rerender", type=int, help="candidate id in moments.json")
-    p.add_argument("--backend", choices=("faster-whisper", "mlx-whisper"), default="faster-whisper")
+    p.add_argument("--backend", choices=("faster-whisper", "mlx-whisper"), default=default_backend())
     args = p.parse_args(argv)
     print(f"Operating system: {platform.system()} {platform.release()}", flush=True)
     video = args.video.expanduser().resolve(strict=True)
@@ -111,11 +117,16 @@ def main(argv=None):
     job = read_json(manifest)
     if job["video"] != str(video) or digest(video) != job["baseline"]["sha256"]:
         raise ValueError("NEEDS_REVIEW: source differs from this job's original")
+    args.count = args.count or (2 if job["baseline"]["duration"] < 300 else 3)
+    if job["baseline"]["duration"] < 300:
+        print(f"Short video: making {args.count} reels; default is 2 unless 3 strong non-overlapping moments exist.", flush=True)
     words_path = job_path(out, "words.json")
+    if args.no_transcript and words_path.exists() and read_json(words_path).get("timing") != "whisper":
+        raise ValueError("NEEDS_INPUT: --no-transcript requires a new --out folder for this subtitle-based job; saved word indexes must be preserved")
     if not words_path.exists():
         scratch = out/"working files"/uuid.uuid4().hex
         scratch.mkdir(parents=True)
-        result = transcribe(video, args.transcript, scratch/"words.json", args.backend)
+        result = transcribe(video, args.transcript, scratch/"words.json", args.backend, args.no_transcript)
         write_json(words_path, result)
         job_path(out, "transcript.txt").write_text(indexed_transcript(result), encoding="utf-8")
     transcript = read_json(words_path)
@@ -140,26 +151,42 @@ def main(argv=None):
     job["backend"] = args.backend
     desired = {str(m["id"]) for m in selected}
     job["reels"] = {key: val for key,val in job["reels"].items() if key in desired}
+    # Always align a fresh copy of the original schedule, including legacy jobs.
+    originals = [{**w, "start": w.get("est_start", w["start"]),
+                  "end": w.get("est_end", w["end"])} for w in transcript["words"]]
+    source_key = hashlib.sha256(json.dumps([
+        [w["text"], w["start"], w["end"]] for w in originals]).encode()).hexdigest()
+    aligned_words = {}
     for moment in selected:
         key = str(moment["id"])
-        alignment_key = [moment["first_word"], moment["last_word"], args.backend]
+        alignment_key = [2, moment["first_word"], moment["last_word"], args.backend, source_key]
+        current = [dict(w) for w in originals]
         cached = job.get("alignment", {}).get(key)
-        if cached and cached["key"] == alignment_key and moment["id"] != args.rerender:
+        if cached and cached["key"] == alignment_key:
             moment.update(cached["boundaries"])
+            for index, times in cached["times"].items():
+                current[int(index)].update(start=times[0], end=times[1])
         else:
-            align_moment(video, transcript["words"], moment, job["baseline"]["duration"],
+            moment.update(audio_fade_in=0, first_word_text=current[moment["first_word"]]["text"])
+            align_moment(video, current, moment, job["baseline"]["duration"],
                          out/"working files"/"alignment", args.backend)
             job.setdefault("alignment", {})[key] = {"key": alignment_key, "boundaries": {
-                field: moment[field] for field in ("start", "end", "first_word_start", "alignment")}}
-            write_json(words_path, transcript)
+                field: moment[field] for field in ("start", "end", "first_word_start", "first_word_text",
+                                                  "audio_fade_in", "alignment") if field in moment},
+                "times": {str(i): [current[i]["start"], current[i]["end"]]
+                          for i in range(moment["first_word"], moment["last_word"]+1)}}
+        aligned_words[key] = [{k: v for k, v in w.items() if k not in ("est_start", "est_end")}
+                              for w in current]
     ordered = sorted(selected, key=lambda m: m["start"])
     if any(a["end"] > b["start"]+.001 for a,b in zip(ordered, ordered[1:])):
         raise ValueError("NEEDS_REVIEW: aligned selected moments overlap; adjust word ranges")
     if any(not 20 <= m["end"]-m["start"] <= 59 for m in selected):
         raise ValueError("NEEDS_REVIEW: aligned moment must remain 20–59 seconds; adjust word ranges")
-    for moment in selected:
+    for number, moment in enumerate(selected, 1):
+        moment["reel_number"] = number
         key = str(moment["id"])
-        signature_data = {"moment": moment, "words": transcript["words"][moment["first_word"]:moment["last_word"]+1], "config": {k: v for k,v in config.items() if k not in ("font_path", "logo_path")}}
+        signature_data = {"moment": moment, "words": [{k: w[k] for k in ("text", "start", "end", "display") if k in w}
+                                                         for w in aligned_words[key][moment["first_word"]:moment["last_word"]+1]], "config": {k: v for k,v in config.items() if k not in ("font_path", "logo_path")}}
         for field in ("font_path", "logo_path"):
             if config.get(field):
                 signature_data[field+"_sha256"] = digest(config[field])
@@ -173,17 +200,17 @@ def main(argv=None):
         tag = uuid.uuid4().hex[:12]
         work = out/"working files"/f"reel-{key}-{tag}"
         slug = re.sub(r"[^a-z0-9]+", "-", moment["headline"].lower()).strip("-")[:48] or "moment"
-        output = out/f"Reel {key} - {slug}.mp4"
+        output = out/f"Reel {number} - {slug}.mp4"
         pending = out/f"render-{key}-{tag}.mp4"
-        print(f"Rendering reel {key}; this may take several minutes.", flush=True)
-        render(video, moment, transcript["words"], config, pending, work)
+        print(f"Rendering Reel {number}/{len(selected)} (candidate {key}); this may take several minutes.", flush=True)
+        render(video, moment, aligned_words[key], config, pending, work)
         # Only retire the old final after the replacement has rendered successfully.
         if output.exists():
             archive = out/"working files"/"superseded"
             archive.mkdir(parents=True, exist_ok=True)
             output.rename(archive/f"{output.stem}-{tag}.mp4")
         pending.rename(output)
-        job["reels"][key] = {"signature": signature, "file": output.name, "metadata": str((work/"render.json").relative_to(out)),
+        job["reels"][key] = {"signature": signature, "reel_number": number, "file": output.name, "metadata": str((work/"render.json").relative_to(out)),
                              "evidence": str((work/"evidence").relative_to(out))}
         write_json(manifest, job)
         if job_path(out, "reviews.json").exists():
@@ -194,7 +221,7 @@ def main(argv=None):
     write_json(manifest, job)
     posts = []
     for moment in selected:
-        posts += [f"Reel {moment['id']}: {moment['headline']}", f"Source: {moment['start']:.3f}–{moment['end']:.3f}s",
+        posts += [f"Reel {moment['reel_number']}: {moment['headline']} (candidate {moment['id']})", f"Source: {moment['start']:.3f}–{moment['end']:.3f}s",
                   f"Why: {moment['reason']}", "Caption: " + moment.get("instagram_caption", ""),
                   "Cover: " + moment.get("cover_text", ""), "Participants: " + ", ".join(moment.get("participants", [])), ""]
     (out/"clips-and-captions.txt").write_text("\n".join(posts), encoding="utf-8")

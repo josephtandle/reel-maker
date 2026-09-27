@@ -1,7 +1,7 @@
 """Mechanical and machine-listening checks plus digest-bound still review."""
 import argparse
 from pathlib import Path
-from common import job_path, digest, duration, ffmpeg, probe, read_json, run, video_stream, write_json
+from common import default_backend, job_path, digest, duration, ffmpeg, probe, read_json, run, video_stream, write_json
 from align import energy_frames, extract_audio, matched_pairs, normalized, whisper_words
 
 LABELS = ["Length 20–59 s", "1080×1920", "Whole foreground", "Headline safe and readable",
@@ -11,7 +11,7 @@ REVIEW_TESTS = {"T3", "T4", "T7"}
 FILLERS = {"um", "uh", "er", "ah"}
 
 
-def machine_listen(reel, metadata, evidence, backend="faster-whisper", aligner=None):
+def machine_listen(reel, metadata, evidence, backend=None, aligner=None):
     wav = evidence/"speech.wav"
     result = {"T5": {"status": "NEEDS_REVIEW"}, "T6": {"status": "NEEDS_REVIEW"}}
     try:
@@ -110,7 +110,7 @@ def opening_picture(reel, metadata, evidence):
             "speaker_identity": "Unverified; inspect opening stills for active-speaker lag"}
 
 
-def verify_reel(video, reel, baseline, metadata, evidence, review=None, backend="faster-whisper"):
+def verify_reel(video, reel, baseline, metadata, evidence, review=None, backend=None):
     evidence.mkdir(parents=True, exist_ok=True)
     info, length = probe(reel), duration(reel)
     stream = video_stream(info)
@@ -174,14 +174,14 @@ def verify_reel(video, reel, baseline, metadata, evidence, review=None, backend=
             "alignment": moment.get("alignment"), "machine_audio": machine}
 
 
-def verify_job(out):
+def verify_job(out, backend=None):
     job = read_json(job_path(out, "job.json"))
     reviews = read_json(job_path(out, "reviews.json")) if (job_path(out, "reviews.json")).exists() else {}
     reports = []
-    for key, reel in sorted(job.get("reels", {}).items(), key=lambda item: int(item[0])):
+    for key, reel in sorted(job.get("reels", {}).items(), key=lambda item: item[1].get("reel_number", int(item[0]))):
         metadata = read_json(out/reel["metadata"])
         reports.append(verify_reel(Path(job["video"]), out/reel["file"], job["baseline"], metadata,
-                                   out/reel["evidence"], reviews.get(key), job.get("backend", "faster-whisper")))
+                                   out/reel["evidence"], reviews.get(key), backend or job.get("backend") or default_backend()))
     write_json(job_path(out, "tests.json"), reports)
     lines = ["# Reel checks", "", "PASS requires measured checks and explicit still inspection plus machine listening. Estimated subtitle times do not prove sync.", "",
              "| Reel | " + " | ".join(f"T{i}" for i in range(1,11)) + " |", "|---|" + "---|"*10]
@@ -209,6 +209,7 @@ def verify_job(out):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--backend", choices=("faster-whisper", "mlx-whisper"), help="override saved job backend")
     args = p.parse_args()
-    reports = verify_job(args.out)
+    reports = verify_job(args.out, args.backend)
     raise SystemExit(0 if reports and all(c["status"] == "PASS" for r in reports for c in r["checks"].values()) else 2)

@@ -8,7 +8,7 @@ from render import font
 
 def contact_sheet(out):
     job = read_json(job_path(out, "job.json"))
-    reels = sorted(job.get("reels", {}).items(), key=lambda item: int(item[0]))
+    reels = sorted(job.get("reels", {}).items(), key=lambda item: item[1].get("reel_number", int(item[0])))
     if not reels:
         return
     sheet = Image.new("RGB", (324*len(reels), 636), "#222222")
@@ -16,7 +16,7 @@ def contact_sheet(out):
     for index, (number, reel) in enumerate(reels):
         with Image.open(out/reel["evidence"]/"still-50.jpg") as frame:
             sheet.paste(frame.resize((324,576)), (index*324,0))
-        draw.text((index*324+12,585), f"Reel {number}", font=font(24), fill="white")
+        draw.text((index*324+12,585), f"Reel {reel.get('reel_number', number)}", font=font(24), fill="white")
     sheet.save(out/"contact-sheet.jpg", quality=90)
 
 

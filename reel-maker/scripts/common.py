@@ -121,3 +121,7 @@ def clean_output(out, job):
             if asset.parts and asset.parts[0] in moved:
                 config[field] = str(Path(moved[asset.parts[0]]).joinpath(*asset.parts[1:]))
         write_json(config_path, config)
+
+
+def default_backend():
+    return "mlx-whisper" if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"} else "faster-whisper"

@@ -1,9 +1,11 @@
 """Read subtitles or transcribe locally; never invent spoken content."""
 import argparse
 import html
+import math
 from pathlib import Path
 import re
-from common import duration, ffmpeg, run, write_json
+from common import default_backend, duration, ffmpeg, run, write_json
+from progress import progress
 
 
 def timestamp(value):
@@ -55,22 +57,32 @@ def subtitles(path):
     return {"timing": "character-estimate", "words": words, "skipped": skipped, "cues": cues}
 
 
+def transcript_stem(path):
+    return re.sub(r"(?:-transcript| transcript)$", "", Path(path).stem.casefold())
+
+
 def find_transcript(video):
     video = Path(video)
     candidates = sorted(p for p in video.parent.iterdir() if p.is_file() and
                         p.suffix.lower() in {".srt", ".vtt"} and
-                        (video.stem.casefold() in p.stem.casefold() or
-                         "transcript" in p.stem.casefold()))
+                        transcript_stem(p).startswith(transcript_stem(video)))
     if not candidates:
         return None
     if len(candidates) == 1:
         chosen = candidates[0]
     else:
         length = duration(video)
-        def distance(path):
-            cues = subtitles(path)["cues"]
-            return abs(max((cue["end"] for cue in cues), default=0)-length)
-        chosen = min(candidates, key=distance)
+        ranked = []
+        for path in candidates:
+            try:
+                result = subtitles(path)
+                last = max((cue["end"] for cue in result["cues"]+result["skipped"]), default=0)
+                ranked.append((abs(last-length), path))
+            except (ValueError, OSError) as exc:
+                print(f"Ignoring transcript {path.name}: {exc}", flush=True)
+        if not ranked:
+            return None
+        chosen = min(ranked)[1]
     print(f"Transcript selected: {chosen.name}", flush=True)
     return chosen
 
@@ -89,35 +101,95 @@ def indexed_transcript(result):
     return "".join(f"[{cue['start']:.3f}-{cue['end']:.3f}] #{cue['first_word']} {cue['text']}\n" for cue in cues)
 
 
-def transcribe(video, transcript, out, backend="faster-whisper"):
-    if transcript is None:
-        transcript = find_transcript(video)
-    if transcript:
-        result = subtitles(transcript)
-        result["transcript"] = str(Path(transcript).resolve())
-    else:
-        print("Local transcription may take 10–30 minutes; model download needs network on first use.", flush=True)
-        audio = out.parent / "speech.wav"
-        run([ffmpeg(), "-nostdin", "-n", "-i", video, "-vn", "-ar", "16000", "-ac", "1", audio])
-        words = []
-        try:
+def normalize_words(words, length):
+    """Retain lexical indexes after empty removal; reserve 20 ms per word."""
+    words = [dict(w, text=w["text"].strip()) for w in words if w["text"].strip()]
+    if len(words)*.02 > length:
+        raise ValueError("NEEDS_REVIEW: source too short for 20 ms word timings")
+    previous = 0
+    for i, word in enumerate(words):
+        start, end = float(word["start"]), float(word["end"])
+        if not math.isfinite(start) or not math.isfinite(end):
+            raise ValueError(f"NEEDS_REVIEW: word {i} timings start={start}, end={end} must be finite")
+        ceiling = length-.02*(len(words)-i-1)
+        start = max(previous, min(max(0, start), ceiling-.02))
+        next_start = float(words[i+1]["start"]) if i+1 < len(words) else length
+        if math.isfinite(next_start) and next_start >= start+.02:
+            ceiling = min(ceiling, next_start)
+        end = min(ceiling, max(start+.02, end))
+        word.update(start=start, end=end)
+        previous = end
+    return words
+
+
+def recognize(audio, backend):
+    words = []
+    try:
+        with progress(f"Transcribing with {backend}"):
             if backend == "mlx-whisper":
                 import mlx_whisper
                 segments = mlx_whisper.transcribe(str(audio), path_or_hf_repo="mlx-community/whisper-small-mlx", word_timestamps=True)["segments"]
                 for segment in segments:
                     if not looping(segment["text"]):
-                        words.extend({"text": w["word"].strip(), "start": w["start"], "end": w["end"]} for w in segment["words"])
+                        words.extend({"text": w["word"].strip(), "start": w["start"], "end": w["end"]} for w in segment.get("words", []))
             else:
                 from faster_whisper import WhisperModel
                 model = WhisperModel("small", compute_type="int8")
                 segments, _ = model.transcribe(str(audio), word_timestamps=True)
                 for segment in segments:
-                    print(f"Transcribed through {segment.end:.0f}s", flush=True)
                     if not looping(segment.text):
                         words.extend({"text": w.word.strip(), "start": w.start, "end": w.end} for w in segment.words or [])
-        except (ImportError, OSError, RuntimeError) as exc:
-            raise RuntimeError("NEEDS_INPUT: local Whisper unavailable; attach VTT/SRT. " + str(exc)) from exc
-        result = {"timing": "whisper", "words": words, "skipped": []}
+    except (ImportError, OSError, RuntimeError) as exc:
+        raise RuntimeError("NEEDS_INPUT: local Whisper unavailable; install/cache the chosen backend. " + str(exc)) from exc
+    return words
+
+
+def transcript_matches(video, transcript, result, length, out, backend):
+    if not transcript_stem(transcript).startswith(transcript_stem(video)):
+        print(f"Ignoring transcript {Path(transcript).name}: filename does not start with video stem.", flush=True)
+        return False
+    last = max((c["end"] for c in result["cues"]+result["skipped"]), default=0)
+    if last-length > min(length*.2, 600):
+        print(f"Ignoring transcript {Path(transcript).name}: last cue {last:.1f}s exceeds video {length:.1f}s by more than 20% or 10 minutes.", flush=True)
+        return False
+    sample = out.parent/"transcript-sample.wav"
+    sample_length = min(60, length)
+    run([ffmpeg(), "-nostdin", "-y", "-i", video, "-t", str(sample_length), "-vn", "-ar", "16000", "-ac", "1", sample])
+    heard = recognize(sample, backend)
+    tokens = lambda text: re.findall(r"\w+", text.casefold())
+    expected = set(tokens(" ".join(w["text"] for w in result["words"]
+                                  if w["start"] < sample_length and w["end"] > 0)))
+    spoken = tokens(" ".join(w["text"] for w in heard))
+    share = sum(w in expected for w in spoken)/len(spoken) if spoken else 0
+    if share < .4:
+        print(f"Ignoring transcript {Path(transcript).name}: audio sample word overlap {share:.0%} is below 40%.", flush=True)
+        return False
+    print(f"Transcript audio check: {share:.0%} word overlap in first {sample_length:.0f}s.", flush=True)
+    return True
+
+
+def transcribe(video, transcript, out, backend=None, no_transcript=False):
+    backend = backend or default_backend()
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    length = duration(video)
+    if no_transcript:
+        transcript = None
+    elif transcript is None:
+        transcript = find_transcript(video)
+    result = None
+    if transcript:
+        try:
+            candidate = subtitles(transcript)
+            if transcript_matches(video, transcript, candidate, length, out, backend):
+                result = {**candidate, "transcript": str(Path(transcript).resolve())}
+        except (ValueError, OSError) as exc:
+            print(f"Ignoring transcript {Path(transcript).name}: {exc}", flush=True)
+    if result is None:
+        print("Local transcription may take 10–30 minutes; model download needs network on first use.", flush=True)
+        audio = out.parent/"speech.wav"
+        run([ffmpeg(), "-nostdin", "-y", "-i", video, "-vn", "-ar", "16000", "-ac", "1", audio])
+        result = {"timing": "whisper", "words": normalize_words(recognize(audio, backend), length), "skipped": []}
     if not result["words"]:
         raise ValueError("NEEDS_INPUT: no speech/transcript words found")
     write_json(out, result)
@@ -127,8 +199,10 @@ def transcribe(video, transcript, out, backend="faster-whisper"):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--video", type=Path, required=True)
-    p.add_argument("--transcript", type=Path)
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--transcript", type=Path)
+    group.add_argument("--no-transcript", action="store_true")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--backend", choices=("faster-whisper", "mlx-whisper"), default="faster-whisper")
+    p.add_argument("--backend", choices=("faster-whisper", "mlx-whisper"), default=default_backend())
     a = p.parse_args()
-    transcribe(a.video, a.transcript, a.out, a.backend)
+    transcribe(a.video, a.transcript, a.out, a.backend, a.no_transcript)

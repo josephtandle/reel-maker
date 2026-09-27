@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 import wave
-from common import ffmpeg, run
+from common import default_backend, ffmpeg, run
 
 
 def normalized(text):
@@ -23,7 +23,8 @@ def local_model(backend):
     return snapshot_download("mlx-community/whisper-small-mlx", local_files_only=True)
 
 
-def whisper_words(audio, backend="faster-whisper"):
+def whisper_words(audio, backend=None):
+    backend = backend or default_backend()
     failures = []
     for engine in (backend, "mlx-whisper" if backend == "faster-whisper" else "faster-whisper"):
         try:
@@ -65,11 +66,14 @@ def energy_frames(wav):
             for i in range(0, len(samples), hop)]
 
 
-def silence_start(frames, first, offset=0):
+def silence_start(frames, first, offset=0, prev_end=0):
     """End of the nearest >=60 ms quiet gap before speech; no arbitrary lead-in."""
     gaps, beginning = [], None
     for relative, rms in frames:
         t = offset + relative
+        if t < prev_end:
+            beginning = None
+            continue
         if t + .02 > first + .001:
             break
         if rms < .006:
@@ -81,7 +85,7 @@ def silence_start(frames, first, offset=0):
             beginning = None
     # Long pauses are not lead-ins. Keep at most 300 ms of proven quiet before the word.
     boundary = gaps[-1] if gaps and first-gaps[-1] <= .3 else first
-    return max(offset, boundary-.02 if gaps and boundary == gaps[-1] else boundary), bool(gaps and first-gaps[-1] <= .3)
+    return max(offset, prev_end, boundary-.02 if gaps and boundary == gaps[-1] else boundary), bool(gaps and first-gaps[-1] <= .3)
 
 
 def quiet_runs(frames, offset=0, threshold=.006, minimum=.059):
@@ -133,7 +137,8 @@ def matched_pairs(expected, heard):
             for k in range(size) if a[i+k]}
 
 
-def align_moment(video, words, moment, length, work, backend="faster-whisper", aligner=None):
+def align_moment(video, words, moment, length, work, backend=None, aligner=None):
+    backend = backend or default_backend()
     first, last = moment["first_word"], moment["last_word"]
     selected = words[first:last+1]
     for word in selected:
@@ -188,9 +193,10 @@ def align_moment(video, words, moment, length, work, backend="faster-whisper", a
             refined[i] = (lo+(hi-lo)*sum(weights[:pos])/total,
                           lo+(hi-lo)*sum(weights[:pos+1])/total)
         frames = energy_frames(wav)
-        refined = snap_to_speech(refined, first, last, frames, start,
-                                 anchors.get(first-1, {}).get("end", start), anchors)
-        if any(not 0 <= s < e <= length for s, e in refined.values()) or any(
+        previous_end = (anchors.get(first-1, {}).get("end",
+                        words[first-1].get("est_end", words[first-1]["end"])) if first else 0)
+        refined = snap_to_speech(refined, first, last, frames, start, previous_end, anchors)
+        if refined[first][0] < previous_end or any(not 0 <= s < e <= length for s, e in refined.values()) or any(
                 refined[i][1] > refined[i+1][0]+.001 for i in range(first, last)):
             raise RuntimeError("Whisper anchors overlap or leave no interpolation space; retaining estimated timing")
         report["max_drift"] = max(abs(t-words[i].get("est_"+field, words[i][field]))
@@ -199,9 +205,9 @@ def align_moment(video, words, moment, length, work, backend="faster-whisper", a
             words[i].setdefault("est_start", words[i]["start"])
             words[i].setdefault("est_end", words[i]["end"])
             words[i].update(start=s, end=e)
-        cut_start, quiet = silence_start(frames, words[first]["start"], start)
+        cut_start, quiet = silence_start(frames, words[first]["start"], start, previous_end)
         if not quiet:
-            cut_start = max(0, words[first]["start"]-.08)
+            cut_start = max(0, previous_end, words[first]["start"]-.08)
         next_start = min((w["start"] for w in heard if w["start"] >= words[last]["end"]-.001), default=length)
         moment.update(start=cut_start, first_word_start=words[first]["start"],
                       first_word_text=words[first]["text"], audio_fade_in=0 if quiet else .12,

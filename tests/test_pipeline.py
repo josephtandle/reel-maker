@@ -70,7 +70,7 @@ class Pipeline(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             video = root/"meeting.mp4"
-            p = root/"different transcript.srt"
+            p = root/"MEETING transcript.srt"
             p.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello world\n\n2\n00:00:01,000 --> 00:00:03,000\nnext sentence\n")
             self.assertEqual(find_transcript(video), p)
             self.assertEqual(indexed_transcript(subtitles(p)), "[0.000-1.000] #0 hello world\n[1.000-3.000] #2 next sentence\n")

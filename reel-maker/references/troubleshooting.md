@@ -10,7 +10,7 @@ Keep exact command/error, fix only this job, rerun failed check then all checks 
 | Captions hidden behind Instagram UI | Fixed 170-pixel PNG and geometry must end by y=1540 |
 | Caption jumps between one/two lines | Same 1080×170 transparent canvas, centered text for every event |
 | Captions late inside long cues | Even-spread/character-weighted times drifted by up to 2.3 s in the reference run. Re-align selected windows with local Whisper, inspect match share/max drift, then machine-check finished reels at 25/50/75% and across all caption words |
-| Previous sentence leaks into first seconds | Estimated first-word times can include the previous-sentence tail. Match Whisper words, then snap to the nearest preceding PCM silence gap; T6 checks first-0.3-second energy and the first recognized word. A real quiet gap may be only 60 ms (RMS below 0.006). With continuous speech, use the aligned onset minus 0.08 s and a 0.12 s audio fade-in; tests.json records the fallback |
+| Previous sentence leaks into first seconds | Estimated first-word times can include the previous-sentence tail. Match Whisper words, then snap to the nearest preceding PCM silence gap; T6 checks first-0.3-second energy and the first recognized word. A real quiet gap may be only 60 ms (RMS below 0.006). With continuous speech, use up to 0.08 s before the aligned onset, never crossing the previous word’s end, and a 0.12 s audio fade-in; tests.json records the fallback |
 | Ending includes next sentence | Tail is .4 s maximum and cannot cross next word; confirm the complete sentence in recognized text |
 | Missing drawtext/subtitles/drawbox | Never use these filters; all text and progress are PNG overlays |
 | Unknown H.264 encoder | Inspect encoders, use supported encoder or imageio-ffmpeg build; no stream-copy workaround |
@@ -19,6 +19,7 @@ Keep exact command/error, fix only this job, rerun failed check then all checks 
 | Font tiny or unreadable glyphs | Use OS bold fallback or supplied language font; Pillow>=10.1 sized default only; inspect actual text |
 | Headline leaves one word alone | Balanced two-line split or reduce font size; shorten headline rather than tiny text |
 | Word timing restarts in transcription chunks | Add each chunk's absolute source offset before merging words |
+| speaker repeats a phrase that Whisper drops (T5 fails by seconds) | Pick another moment, or hide the repeat through display-skip: set `display` to an empty string while preserving original text, timing, entries and word indices. Rerender that candidate and rerun T5; never delete or renumber words |
 | Repeated phrase hallucinations | Skip repetition-loop regions; inspect gaps and never invent replacement speech |
 | Garbled captions, lowercase names | Agent reviews full context, writes display corrections without changing meaning; uncertainty needs review |
 | Several subtitle speakers overlap | NEEDS_REVIEW; isolate intended speaker/timings rather than stacking captions |
