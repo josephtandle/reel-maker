@@ -1,4 +1,7 @@
-.venv/
 __pycache__/
-.pytest_cache/
 *.pyc
+.venv/
+.pytest_cache/
+node_modules/
+reel-maker/premium/node_modules/
+reel-maker/premium/out/

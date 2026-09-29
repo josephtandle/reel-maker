@@ -1,40 +1,46 @@
-# Read, score, then choose
+# Picking moments that stop the scroll
 
-Read all transcript words before identifying the speaker's offer. Keep the host's insights and guest results; never assume a guest is the seller. Avoid transcript hallucination/repetition loops. A sellable moment is a truthful result, before/after, useful insight or answered objection, not a fabricated promise.
+The script scores every window with a hook-first formula (hook 35%, stand-alone 20%, payoff 20%, pace 15%, length 10%) and saves the sub-scores in `moments.json`. Use them as a shortlist. Your judgment beats the formula: you can read meaning, the script can only count words.
 
-List exactly 10 candidates (they may overlap each other), each 20–59 seconds and complete sentences with no preceding fragments. Score each dimension 1–5:
+## The stranger test
 
-| Dimension | 1 | 3 | 5 |
-|---|---|---|---|
-| hook | Slow setup | Interesting question | Immediate tension/result in first 3 s |
-| clarity | Depends on missing context | Mostly understandable | Fully stand-alone |
-| proof | Unsupported assertion | Specific example | Concrete, credible result |
-| offer_fit | Unrelated | Broadly relevant | Direct reason to want the actual offer |
+Picture someone who has never heard of the speaker, scrolling at 11pm, half distracted and a bit skeptical. In the first 3 seconds, would they stop? At the end, would they want to know more about what the speaker offers? Pick the moments where both answers are yes.
 
-Sum the four scores. Select the top 3–5 that do not overlap and provide useful variety. Save any tie-break/overlap substitution in selection_note. If the user chooses another candidate, honor that choice and note the override. For an unusually short source with fewer than 10 distinct good candidates, candidates may be alternate boundaries around the same moments; disclose that. Do not invent new content to fill a quota. If enough complete moments cannot be found, NEEDS_INPUT for a longer recording.
+## What a great clip has
 
-The first run creates moments.json with this schema:
+1. **A hook in the first sentence.** Tension, a surprising claim, a specific number, a question the viewer wants answered, or a result. "Most people price this completely wrong" beats "So, the next thing I want to talk about is pricing."
+2. **It stands alone.** No "like I said earlier", no "that" or "it" pointing at something the viewer never saw. If it needs setup, start earlier or skip it.
+3. **A payoff.** The clip delivers what the hook promised: the answer, the example, the before and after, the number. End right after the payoff lands, on a complete sentence.
+4. **Proof over claims.** A real story, a client result, a specific example. Never invent or exaggerate a result that is not in the transcript.
+5. **Offer fit.** It gives the viewer a reason to want what the speaker sells (their service, course, product, community). Work out the offer from the whole transcript first.
+6. **Variety.** Across the set, mix types: one insight, one story or result, one objection answered, one contrarian take. Don't pick three clips from the same five minutes.
 
-```json
-{
-  "offer": "A factual description inferred from the full transcript",
-  "transcript_read_in_full": true,
-  "selection_note": "Top non-overlapping moments, with varied proof",
-  "candidates": [{
-    "id": 1, "first_word": 0, "last_word": 60,
-    "headline": "A concrete benefit in seven words",
-    "reason": "Why this actual excerpt supports the offer",
-    "scores": {"hook": 5, "clarity": 4, "proof": 5, "offer_fit": 5},
-    "complete_sentences": true, "selected": true,
-    "instagram_caption": "Under 120 words, ending with the supplied CTA.",
-    "cover_text": "Under five words",
-    "participants": ["Host", "Guest (not host)"]
-  }]
-}
-```
+## Moment types that work
 
-Expand to ten entries. first_word and last_word are inclusive zero-based indexes into `working files/words.json`; `working files/transcript.txt` shows the first word index of every cue. The script calculates start, end and total. End is final word end +0.4 s, bounded by the next word and recording end so a new sentence does not leak in. Selected moments are then re-timed with local Whisper on a window padded by 2 seconds. Matched words use Whisper times; unmatched words interpolate between anchors. The start snaps to the nearest preceding PCM silence gap; the tail becomes at most .15 s. T5/T6 machine checks on the final reel must confirm sync and a clean first word. Missing models preserve estimates and require review; do not blindly trim off the intended first word.
+| Type | Opening line looks like |
+|---|---|
+| Contrarian take | "Everyone says X. That's wrong." |
+| Mistake | "The biggest mistake I see is..." |
+| Result / before-after | "We went from 2 calls a month to 11." |
+| How-to in one breath | "Here's the three-step version." |
+| Objection answered | "People ask me if this works for small teams." |
+| Story with a turn | "Last week a client called me, panicking." |
+| Guest testimonial | "Before this I was working 70-hour weeks." (guest, not the host) |
 
-Set optional display on a word to correct caption text; keep text as originally transcribed and preserve timing. Use sentence case, light punctuation, fix only unmistakable mishearings and remove um/uh or accidental adjacent duplicates. Names/acronyms keep their proper casing. Clean captions do not authorize rewriting the speaker's meaning.
+## Boundaries
 
-To swap a reel, toggle selected on the old/new candidates, keep the count consistent, then run with --rerender NEW_ID. Other current renders remain; removed selections remain on disk as old revisions but leave the current manifest/contact sheet. Share only the current manifest's reels.
+- Start on the hook sentence itself. Cut filler openers ("so", "um", "and", "yeah") by starting one word later.
+- 20 to 60 seconds. 30 to 45 is the sweet spot. Shorter is better than padded.
+- End on a full stop, not mid-thought. The script adds a small tail and stops before the next word.
+- Use `working/transcript.txt` to find word indexes: each line shows the index of its first word, count forward for the exact word.
+
+## Writing the text
+
+- **Headline** (burned into the top of the video): 7 words or fewer, concrete, the reason to keep watching. Mark ONE word with `*asterisks*` for the accent color. Good: `Why your *pricing* page scares buyers`. Bad: `Great insights on pricing strategy`.
+- **Post caption** (captions.txt): first line = the hook, 1 to 3 short lines of value, then the CTA from the brand settings. Under 120 words. No hashtag walls; 0 to 3 relevant ones if the user wants them.
+- **Cover text**: 5 words or fewer, readable as a thumbnail.
+- **Captions**: fix misheard names and words with `display` in `working/transcript.json`. Keep the speaker's words and meaning. Proper nouns and "I" capitalized.
+
+## When there isn't enough
+
+If a short video only has one or two strong moments, make fewer reels and say why. Never pad the count with weak clips, and never invent content.

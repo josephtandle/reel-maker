@@ -1,0 +1,15 @@
+{
+  "name": "reel-maker-premium",
+  "private": true,
+  "version": "2.0.0",
+  "license": "MIT",
+  "scripts": {"render": "remotion render src/index.tsx reel"},
+  "dependencies": {
+    "remotion": "4.0.502",
+    "@remotion/cli": "4.0.502",
+    "@remotion/google-fonts": "4.0.502",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {"typescript": "5.9.3", "@types/react": "19.2.14"}
+}

@@ -1,29 +1,69 @@
-# reel-maker
+# Reel Maker
 
-Turn a Zoom call, webinar or talk into 2–5 Instagram Reels that give viewers a reason to want what you sell. An Agent Skill for business owners using Claude Code or Codex.
+Turn a long video, Zoom call, webinar or podcast into 2 to 5 ready-to-post vertical Reels, using Claude Code or Codex on your own computer. Free and open source (MIT). Version 2.0.0.
 
-**Before:** a long recording with valuable moments buried inside it. **After:** short vertical videos with the whole original picture over a blurred background, an animated hook, word-highlighted captions, a progress bar and optional branding. You also get post copy, ten scored candidate moments, a contact sheet and a per-reel test report. Nothing is uploaded or posted.
+**Before:** a 45-minute recording with your best 40 seconds buried somewhere in the middle, a wide landscape frame, quiet audio and no captions.
 
-Download this repository, then paste a setup request into your chat:
+**After:** a folder on your Desktop with:
 
-**Claude Code**
-> Install the reel-maker skill from this downloaded repository into ~/.claude/skills/reel-maker. Copy only its reel-maker folder. Read SKILL.md, check the tools, and help me turn my recording into reels. Ask me before any whole-computer installation.
+- `Reel 1 - <name>.mp4`, `Reel 2 ...`: vertical 1080x1920 clips, each opening on its strongest line, framed around the speaker's face (full head, proper headroom), with a hook headline, word-by-word highlighted captions, your logo and brand color, a "Comment WORD" call-to-action at the end, a progress bar, and audio leveled to -14 LUFS (the loudness Instagram, TikTok and YouTube expect)
+- `captions.txt`: a ready-to-paste post caption for each reel, hook first
+- `contact-sheet.jpg`: stills from every reel so you can check them at a glance
+- `.srt` caption files, a `report.md` of automatic checks, and the transcript
 
-**Codex**
-> Install the reel-maker skill from this downloaded repository into ~/.agents/skills/reel-maker. Copy only its reel-maker folder. Read SKILL.md, check the tools, and help me turn my recording into reels. Ask me before any whole-computer installation.
+Nothing is uploaded or posted. You review, you post.
 
-Then say: “Turn this video into reels,” and provide the recording's local file path and, if available, its VTT/SRT transcript. The agent reads the whole transcript, scores ten moments and chooses the strongest non-overlapping excerpts. You can choose another saved candidate and ask it to re-render that number.
+## What it does
 
-Requirements: Python 3.9+ (3.10+ recommended), Pillow 10.1+, ffmpeg with an H.264 encoder and ffprobe. A matching attached transcript avoids full-recording transcription after a 60-second audio overlap check. Selected-window alignment and final machine listening still use local faster-whisper (or mlx-whisper on Apple Silicon); initial model setup needs internet; alignment/verification use cached models only and report NEEDS_REVIEW when unavailable. Tools are installed in a local venv where possible. imageio-ffmpeg is an ffmpeg fallback, but does not bundle ffprobe. No accounts or paid APIs are required.
+1. **Transcribes** with word-level timestamps on your machine (mlx-whisper on Apple Silicon Macs, faster-whisper on Windows, Intel Macs and Linux). Or use a transcript you already have (SRT/VTT).
+2. **Finds the best moments** hook-first: every 20 to 60 second window is scored on the opening line, whether it stands alone, the payoff, pace and length. Then your AI assistant reads the whole transcript and makes the final picks, headlines and captions like an editor would.
+3. **Cuts and frames** each moment in 9:16 with face detection, following the speaker across shots. Screen shares and gallery views get a "fit" layout (whole picture over a blurred background). Podcasts get a branded audiogram.
+4. **Renders** captions and graphics that work with any ffmpeg (no special builds), normalizes loudness and checks every file: length, size, audio, loudness, captions burned in, clean decode.
+5. **Premium mode (optional):** a more designed look rendered with Remotion: serif headline with an italic accent word, glowing video card, animated caption pills, speaker name tag and CTA pill in your brand colors.
 
-Files go in a new `Reels - (video name) - (date)` folder on your actual Desktop, including redirected Windows/OneDrive Desktops. Edit `reel-maker.config.json` there for an accent color, bold font, PNG logo or short final CTA. The original video remains unchanged. `moments.json` retains candidate IDs and maps them to sequential final reel numbers. Videos under about 5 minutes default to 2 reels unless 3 strong non-overlapping moments exist. Finals are named `Reel N - <short-slug>.mp4`. Only finals, `contact-sheet.jpg`, `tests.md`, `moments.json`, `clips-and-captions.txt` and config stay at top level. Old renders, transcripts, `words.json`, `tests.json`, reviews and job state are retained under `working files`.
+## Install (no GitHub knowledge needed)
 
-The agent must inspect 25/50/75% stills. Machine listening re-transcribes finished reels and checks caption timing: 90% of words within 0.5 s, none over 1 s, plus the three sample points. A first-0.3-second energy and speech check verifies clean starts. Missing Whisper evidence cannot be manually marked passed. Subtitle estimates are refined on selected windows with 2-second padding; alignment quality is recorded. The user remains responsible for obtaining participants' permission before posting.
+1. On this page, click the green **Code** button, then **Download ZIP**. (Or download `reel-maker.zip` from the latest release on the right.)
+2. Unzip it. You get a folder; inside is a folder called **reel-maker**.
+3. Open **Claude Code** or **Codex**, drag the inner **reel-maker** folder into the chat, and type:
 
-Transcripts beside the video must start with the video stem (case-insensitive, ignoring transcript suffixes); the closest last cue wins when several match. The first 60 seconds must have at least 40% word overlap with local Whisper. Overruns exceeding 20% or 10 minutes are rejected. `--no-transcript` forces transcription in a new job. Indexed `working files/transcript.txt` makes word-range selection explicit. Transcripts may extend past the video, but selected clips may not. Black borders around a small phone picture are detected and removed before fitting the whole active picture; this is not a zoom.
+   > Install this skill.
 
-For name/headline/caption edits, update `display` in `working files/words.json` or edit `moments.json`, then run the original command with `--out "<job>" --rerender N`. Pass `--backend mlx-whisper` on Apple Silicon or `--backend faster-whisper` elsewhere. It reuses unchanged candidate alignment and re-renders only candidate N, including the cut; no overlay-only shortcut is currently implemented. Original transcript timings stay unchanged; refined times are cached per candidate. Preserve proper nouns and “I”; correct misheard names only from clear context without changing meaning.
+4. It checks your computer and asks before downloading anything (about 600 MB once: the speech-to-text engine and model). It also asks for your name, handle, brand color, logo and call-to-action word once, and remembers them.
 
-For maintainers: create `.venv`, install `requirements.txt`, then run `.venv/bin/python -m unittest discover -s tests`. The suite works offline when Pillow and ffmpeg/ffprobe already work. The 90-second synthetic tone fixture renders two reels and checks mechanics; natural speech and platform-specific installs still need live review.
+Then any time:
 
-MIT licensed. See [LICENSE](LICENSE).
+> Turn this video into reels: /path/to/my-video.mp4
+
+You can drag the video into the chat instead of typing the path.
+
+### Requirements
+
+- Python 3.9 or newer (3.11+ recommended). Mac: usually already there; if not, python.org. Windows: python.org, and tick "Add python.exe to PATH".
+- ffmpeg. If you don't have it, Reel Maker installs a private copy.
+- About 2 GB free disk space.
+- Optional for premium mode: Node.js 18+ (nodejs.org).
+
+Everything Reel Maker installs goes in one folder, `~/.reel-maker`. Delete that folder to remove it completely.
+
+## Speed
+
+On an Apple Silicon Mac, a one-hour recording transcribes in roughly 3 to 6 minutes and each reel renders in under a minute. Older laptops and CPU-only Windows machines are slower; use a transcript file if you have one.
+
+## Self-test
+
+```
+python3 reel-maker/scripts/smoke_test.py
+```
+
+Generates a sample clip and runs the whole standard render path with checks. Needs only Python, Pillow and ffmpeg (no downloads).
+
+## Permission
+
+If other people appear in your recording, get their OK before posting clips of them.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Premium mode uses [Remotion](https://www.remotion.dev), which is free for individuals and small teams (up to 3 people) and needs a company license for larger companies.
+
+Made by Joe Che. Share it with anyone.

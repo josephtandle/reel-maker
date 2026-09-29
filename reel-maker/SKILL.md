@@ -1,32 +1,144 @@
 ---
 name: reel-maker
-description: Turn a video into 2 to 5 Instagram Reels for a business owner. Use for requests such as "turn this video into reels", "make clips from my Zoom call", or "cut Instagram reels from this recording". Produces local files for review, never posts them.
+description: Turn a long video, Zoom call, webinar or podcast into 2 to 5 ready-to-post vertical Reels (Instagram, TikTok, Shorts) with a hook headline, word-by-word captions, face-aware 9:16 framing, loudness at -14 LUFS, post captions and a contact sheet. Use for requests like "turn this video into reels", "make clips from my podcast", "cut shorts from this recording", or "install this skill". Everything runs on the user's computer. Nothing is uploaded or posted.
 ---
 
-Turn the recording into stand-alone moments that make viewers want what the speaker sells. Before starting, state the T1–T10 acceptance checks in plain English. You are done only when all checks pass for every reel. Say one short line per step and warn before slow transcription or rendering.
+# Reel Maker
 
-1. **Detect the OS first**, including PowerShell versus WSL and local computer versus cloud. Use the named/attached video. If unavailable, look only in the user's Desktop and Downloads, pick the newest video and name it; if several attached videos exist choose the longest. If none is accessible, stop NEEDS_INPUT for a file location or transcript. A local file path avoids upload limits. Do not invent paths. Sources under 70 seconds need NEEDS_INPUT. Never modify or delete the original. Scripts record its size and SHA-256 before working.
-2. **Check tools before installing.** Check Python, ffmpeg, ffprobe and Pillow. Python 3.9+ works; recommend 3.10+ (some optional Whisper package versions need newer Python). Make a local venv in a separate temporary setup folder (the output folder must initially be empty); invoke its Python directly. Use existing ffmpeg first; otherwise install imageio-ffmpeg in that venv. Check `-version`, `-encoders` for H.264, and `-filters` for blur/overlay. The scripts choose libx264, then listed H.264 alternatives; blur falls back to gblur, darkening to lutrgb. imageio-ffmpeg does not include ffprobe: obtain ffprobe before rendering, since every duration must be verified with it. Only if local options fail, explain a system installation in one line and wait for the user's OK before brew (only if installed), winget or apt. Python installation also requires OK (macOS developer tools installer, Windows Python package, Linux package manager). Never edit PATH, shell profiles or global settings. Use official packages only. Print progress during pip installs: use the venv Python with `python <skill>/scripts/progress.py "Pillow>=10.1"` (and the chosen Whisper package as another argument). This wraps foreground pip with a progress line every 30 seconds; no server or detached process is started. For transcription, selected-window alignment and final machine listening, default to `--backend mlx-whisper` on Apple Silicon and `--backend faster-whisper` elsewhere; install that package in the venv when available. Alignment and verification use cached models only: faster-whisper `small`, or `mlx-community/whisper-small-mlx`; obtain the model during permitted setup. Using the venv's Python, run the command for the chosen backend, then its offline cache check:
+You are helping a business owner turn one long recording into short vertical clips people actually stop scrolling for. The user is probably not technical. Talk in plain English, one short line per step, and warn before anything slow (transcribing, rendering, downloading).
 
-   - **mlx-whisper (Apple Silicon):** `python -c "from huggingface_hub import snapshot_download; print(snapshot_download('mlx-community/whisper-small-mlx'))"`. Check: `python -c "from huggingface_hub import snapshot_download; print(snapshot_download('mlx-community/whisper-small-mlx', local_files_only=True))"`.
-   - **faster-whisper:** the first model load downloads automatically: `python -c "from faster_whisper import WhisperModel; WhisperModel('small', compute_type='int8'); print('small model ready')"`. Check: `python -c "from faster_whisper import WhisperModel; WhisperModel('small', compute_type='int8', local_files_only=True); print('cached small model ready')"`.
+`SKILL_DIR` below means the folder this SKILL.md is in. `PY` means `python3` on macOS/Linux, and `py -3` (or `python`) on Windows. Run every command from any folder using full paths in quotes.
 
-   A zero exit from the offline check confirms the cache is usable; a failed check is not successful setup. Both use the same `--backend` flag as transcription and try the other installed backend if needed. Offline: use an installed backend and cached model. A supplied VTT/SRT still requires the sample audio check; if no backend/model is available, report NEEDS_INPUT for setup before preparing the transcript. Do not start servers, background jobs or detached processes: use foreground sequential work with progress, or bounded transcription chunks with absolute timestamp offsets.
-3. **Prepare the job.** Run `python <skill>/scripts/make_reels.py --video "<video>" --transcript "<optional.vtt>" --backend mlx-whisper` on Apple Silicon; use `--backend faster-whisper` elsewhere. Pass the chosen backend explicitly on every transcription/alignment command, including repeat runs. Code also auto-detects the default. Omit `--transcript` to discover a VTT/SRT whose stem starts with the video stem, case-insensitively and ignoring trailing “-transcript” or “ transcript”. When several match, prefer the last cue closest to video duration. Both discovered and supplied transcripts must pass a 60-second audio sample near the start using the chosen Whisper backend: at least 40% of recognized sample words must appear in estimated transcript words covering that time. Reject transcripts whose last cue exceeds the video by more than 20% or 10 minutes (whichever is smaller). Rejections log the reason and fall back to full transcription. Use `--no-transcript` to bypass subtitles entirely; for an existing subtitle-based job use a new output folder to preserve saved word indexes. Transcription prints progress every 30 seconds. Under 5 minutes, default to 2 reels; use `--count 3` only when 3 strong non-overlapping moments exist. Otherwise default to 3, or explicitly choose 3–5. The script saves in a new real Desktop folder `Reels - (video name) - (date)`, adding a numeric suffix on collisions. Windows known-folder resolution includes OneDrive; WSL resolves the Windows Desktop; Linux uses xdg-user-dir. Use `--out "<new folder>"` in cloud/workspace environments; retain this exact folder for subsequent runs. Tools never assume a personal absolute path. Config defaults are created there on first run. Initial word times use Whisper or character-weighted subtitle cues. Once moments are selected, align.py extracts each window with 2 seconds of padding and matches local Whisper words to transcript words, placing unmatched words beside their nearest matched anchor without spanning long pauses. Unheard tokens between touching anchors borrow about 20 ms each from a neighbouring anchor; energy-based onset/offset snapping uses quiet runs below RMS 0.006 lasting at least 60 ms. Original word times stay in `working files/words.json`. Candidate-specific refined times and cut/fade settings are cached separately in `working files/job.json`, keyed by word range, source transcript and backend. Legacy `est_start`/`est_end` are honored as original times. Clip starts snap to the nearest preceding quiet gap after the previous word ends, including gaps shorter than 0.3 s. Never cross the previous word. Continuous speech with no usable gap uses up to 0.08 s of preroll, bounded by the previous word’s end, before the aligned first word and a 0.12 s audio fade-in, recorded in tests.json, and ends stop just after the final word without entering the next. Alignment match share and maximum drift appear in `working files/tests.json`. Missing models/backends retain estimates and mark T5 NEEDS_REVIEW with the reason. Small transcript overruns within the limits above are allowed; never select words outside the video. Repetition loops are skipped, never invented around. Long recordings may take 10–30 minutes to transcribe.
-4. **Read the whole transcript**, not just excerpts. Use `working files/transcript.txt` (one cue per line, `[start-end] #firstWordIndex text`) and `working files/words.json` (inclusive zero-based indexes). Identify the seller/host (usually the person speaking most); relevant guest testimonials qualify. Read [moments.md](references/moments.md). Fill all 10 candidates in `moments.json`, score each and select the best 3–5 non-overlapping moments for longer videos. For videos under about 5 minutes, make 2 reels unless 3 strong non-overlapping moments exist; explain the chosen count in the final summary. The first CLI run intentionally stops NEEDS_REVIEW with the template; this is work for you, not a question to the user. Use exact word indexes, complete sentences, no lead-in, and an estimated 0.4-second tail limited by the next word/source end; alignment refines it to at most 0.15 seconds. Write a factual headline under 8 words, reason, post caption under 120 words ending with the user's CTA or “Comment INFO and I'll send you the details”, cover under 5 words, and visible/audible participants (mark non-hosts). Clean caption `display` text in `working files/words.json` to sentence case with light punctuation, remove filler/doubled words, and fix only obvious contextual mishearings without changing meaning. Preserve original `text` and timing; the aligner refines a separate candidate copy. Keep proper nouns, acronyms and “I” capitalized; exclamations such as “oh my god” become “Oh my god”. Drop a caption word only through the display-skip mechanism: set `display` to an empty string, keeping its original word entry, timing and index intact. Never delete entries or renumber indexes to remove spoken repetitions; T5 compares the remaining display events against speech. Fillers and repetitions are not automatically removed by the renderer. Never silently “correct” uncertain names or invent claims.
-5. **Render sequentially** with the same command, explicit `--backend mlx-whisper` (Apple Silicon) or `--backend faster-whisper` (elsewhere), and `--out` from step 3. A progress line names each reel before rendering. Read [layout.md](references/layout.md) before changes. Configure `reel-maker.config.json`: accent color, optional bold font path, optional transparent PNG logo, optional last-three-seconds CTA. Relative asset paths resolve inside the job folder. Default accent is #FFD166. ffmpeg cropdetect samples every 0.5 s, groups consecutive crop boxes within a four-pixel tolerance, and merges segments shorter than 1 s into a neighbour using a conservative union. Each segment fits its complete cropped picture over a blurred/darkened background derived from that same crop, then the segments are concatenated; this is not a subject zoom. Check the three stills for lost picture edges, especially dark scenes. Only a confirmed burned-in date/name strip may be trimmed, <=8%, with evidence entered in config. Review the whole stamp fits in the strip. The hook slides in during the first 0.4 seconds. Captions show 2–5 words with only the spoken word highlighted, using fixed 1080×170 transparent PNGs. The safe-edge progress bar is a PNG overlay. ALL text uses Pillow PNGs, never ffmpeg drawtext/subtitles. Logo is small and in the top-right safe zone.
-6. **Verify and repair.** The CLI writes `tests.md`, `working files/tests.json`, the contact sheet, 25/50/75% stills, exact commands/filter graph and caption events. Read [troubleshooting.md](references/troubleshooting.md). T5 uses **machine listening**: re-transcribe the finished reel locally and compare both word starts and ends to the caption schedule at 25/50/75% and across all words. Sync statistics use only matched non-filler caption words: exclude “um”, “uh”, “er”, “ah” and unmatched words, listing both excluded groups separately. At least 90% of scored words must be within 0.5 s and none may exceed 1.0 s. Each sample with scored words must be within 0.5 s; samples without scored words are excluded (or pass if truly blank). No scored words means NEEDS_REVIEW. Alignment share remains a separate metric; below 0.90 produces a WARNING in tests.md, not a T5 failure. Look at the listed unmatched words. T6 checks PCM energy and speech during the first 1.0 s, recognizes the intended first spoken word even if display-skipped, and requires a quiet onset or the recorded continuous-speech preroll/fade fallback with onset agreement. It also compares three opening foreground frames to flag a silent still speaker. Inspect these opening frames: machine checks cannot identify whether the visible person is the speaker. Missing speech evidence stays NEEDS_REVIEW; manual notes cannot override T5/T6. Inspect all three stills yourself for readable glyphs, whole active-picture edges and unobscured faces (T3/T4/T7). Confirm complete sentences from the transcript and recognized text. Record digest-bound `working files/reviews.json` per the reference, then run `python <skill>/scripts/verify.py --out "<job>" --backend mlx-whisper` (or `--backend faster-whisper` elsewhere). Do not report pending checks as passed. To rebuild only one selected candidate after editing a headline, name or caption, run `python <skill>/scripts/make_reels.py --video "<video>" --out "<job>" --rerender N --backend mlx-whisper` (or `--backend faster-whisper` elsewhere, matching the job). This reuses the saved candidate alignment for unchanged word ranges and transcript, then cuts and renders that one reel; it is not an overlay-only optimization. N is its saved candidate number. Other reels retain their files and reviews. New renders invalidate that reel's review; old revisions are archived, not deleted.
-7. **Keep the delivery folder tidy.** Final videos are `Reel N - <short-slug>.mp4`, numbered 1, 2, 3 by final selected order in `moments.json`, never by candidate ID. Each selected candidate keeps its `id` and `reel_number` mapping. Only final reels, `contact-sheet.jpg`, `tests.md`, `moments.json`, `clips-and-captions.txt` and `reel-maker.config.json` stay at the top level. All intermediate files, superseded renders, job state, transcript, machine evidence and visual reviews live in `working files`. Scripts also read legacy top-level job state and archive it on completion. Relative branding paths are updated when their files move. Resume with the same `--out`; do not create a second output folder for edits.
+## 0. First time only: install, check, brand
 
-**Self-healing contract**
-1. Capture the exact command and useful error text.
-2. Diagnose only job-created files, job tools and this job folder; preserve all source/user files.
-3. Make the smallest safe evidence-supported fix; use the troubleshooting reference.
-4. Rerun the failed test, then every test for that reel.
-5. Never repeat the same failure more than twice without new evidence; change approach.
+**If the user just said "install this skill"** (they dragged this folder into the chat or gave you a path to it): copy the whole `reel-maker` folder that contains this SKILL.md to
+- Claude Code: `~/.claude/skills/reel-maker` (Windows: `%USERPROFILE%\.claude\skills\reel-maker`)
+- Codex: `~/.codex/skills/reel-maker` (Windows: `%USERPROFILE%\.codex\skills\reel-maker`), or `~/.agents/skills/reel-maker` if that is the folder your Codex version reads
 
-Figure it out yourself. Do not stop and ask me how, and do not hand the problem back to me. Read the error, check the docs, try another route, and install any dependency you need along the way. Keep going until it actually works.
+Create the parent folder if needed. If an older reel-maker is already there, move it to `reel-maker.old-<date>` first (never delete it). Then continue with the check below and tell the user they can now say "turn this video into reels" any time.
 
-This persistence sentence does not authorize system installs, credentials or external changes. Hard stops: passwords/authentication, paid services, posting/sending, deleting anything not created by this job. NEEDS_INPUT when only the user can supply a missing input/approval; NEEDS_REVIEW when you cannot prove a fix safe or cannot inspect stills or obtain machine speech evidence. State what failed, what you tried and one next action. If a package manager is the last resort, show the OS-specific one-line install command and its purpose, wait for OK, then verify and resume.
+**Check the computer:**
 
-**Finish in plain English:** chosen reel count (explain the 2-reel default for videos under about 5 minutes), location and file links, the T1–T10 table, each headline and why selected, tools installed and where, assumptions and timing limits, everyone visible/speaking and which are not the host (so the owner can obtain permission). Say how to upload a Reel and paste the prepared post caption. Never upload yourself. In a cloud workspace offer a job ZIP and separate reel links. Never present an unfinished review as complete.
+```
+PY "SKILL_DIR/scripts/reelmaker.py" doctor
+```
+
+It reports ffmpeg, Python, the transcription engine, face detection and Node (premium only), and ends with a SETUP PLAN.
+
+- **ffmpeg missing:** `setup` can install a private copy (imageio-ffmpeg, about 70 MB) inside Reel Maker's own folder. That is the default fix. Only if that fails, offer the system install (`brew install ffmpeg` on Mac if Homebrew exists, `winget install Gyan.FFmpeg` on Windows, `sudo apt install ffmpeg` on Linux) and wait for a yes.
+- **Python missing or older than 3.9:** tell the user to install Python 3.11+ from python.org (Windows: tick "Add python.exe to PATH"). Wait for them, then re-run doctor.
+
+**Install the tools (ask first).** Show the user the SETUP PLAN in one or two lines, for example: "I need to download about 600 MB once: the transcription engine and its speech model, plus a small face-detection library. It all goes in `~/.reel-maker`, nothing system-wide. OK?" Only after a clear yes:
+
+```
+PY "SKILL_DIR/scripts/reelmaker.py" setup --yes
+```
+
+On Apple Silicon Macs this installs mlx-whisper (fast, uses the GPU). Everywhere else it installs faster-whisper. Add `--model large-v3-turbo` for better accuracy (bigger download, about 1.6 GB) or `--no-faces` to skip face detection. Setup prints a progress line every 30 seconds; do not start it in the background.
+
+**Brand (ask once, saved forever).** If doctor says no brand is saved, ask these in ONE message, all optional:
+1. Your name as it should appear (e.g. "Sam Rivera")
+2. Your handle (e.g. "@samrivera")
+3. Brand color (a hex code like #2E86DE, or describe it and you pick the hex)
+4. Logo file (PNG with a transparent background works best), or none
+5. Your comment keyword for the call to action, e.g. INFO or GUIDE ("Comment GUIDE for the details")
+
+Then save it:
+
+```
+PY "SKILL_DIR/scripts/reelmaker.py" brand --name "Sam Rivera" --handle "@samrivera" --color "#2E86DE" --logo "/path/logo.png" --cta-word GUIDE
+```
+
+Change it any time with the same command (`--show` prints it, `--reset` clears it).
+
+## 1. Find the video
+
+Use the file the user named or attached. A local file path is best (no upload limits). If they didn't give one, look only in their Desktop and Downloads for the newest video or audio file, name it and confirm. A folder is fine too: every video/audio file in it becomes its own job. Podcasts and audio-only files work: they get an audiogram (brand background, waveform, captions). Never modify, move or delete the original.
+
+## 2. Transcribe and shortlist
+
+```
+PY "SKILL_DIR/scripts/reelmaker.py" make "<video>" --stop-after find
+```
+
+This creates the job folder on the Desktop, `Reels - <video name> - <date>` (use `--out "<folder>"` to put it elsewhere, and reuse that same `--out` for every later command). It transcribes with word timestamps (a 1-hour video takes about 3 to 6 minutes on Apple Silicon, longer on older laptops: say so), then scores every possible 20 to 60 second window and writes the top picks to `moments.json`. If the user already has an SRT/VTT transcript, add `--transcript "<file>"` to skip transcription.
+
+## 3. Pick the moments (this is your job, not the user's)
+
+The script's picks are a starting point. You are the editor. If the user told you what they sell, every pick should give a viewer a reason to want that; otherwise work out the offer from the transcript. Read [references/moments.md](references/moments.md), then read the WHOLE transcript in `working/transcript.txt` (format `[start-end] #firstWordIndex text`).
+
+For each reel, edit `moments.json`:
+- `selected`: true for the 2 to 5 you want (2 for a video under 5 minutes). Reels are numbered in file order, so put the strongest first.
+- `first_word` / `last_word`: word indexes (from transcript.txt) so the clip opens on the hook line and ends on a complete thought. 20 to 60 seconds, 30 to 45 is the sweet spot.
+- `headline`: 7 words or fewer, the reason to keep watching. Wrap ONE word in `*asterisks*` to color it, e.g. `The *one* email that books calls`.
+- `post_caption`: under 120 words, first line is the hook, end with the CTA.
+- `cover_text`: 5 words or fewer.
+- `speaker` / `speaker_role`: optional name tag, e.g. "Sam Rivera", "Founder". Only for people you can clearly identify from the transcript; otherwise leave blank.
+
+To fix a misheard word in the captions, add `"display": "Correct"` to that word in `working/transcript.json` (use `"display": ""` to hide a filler word). Never change the meaning of what someone said, and never invent claims.
+
+## 4. Render
+
+```
+PY "SKILL_DIR/scripts/reelmaker.py" render --out "<job folder>"
+```
+
+Each reel: cut, loudness normalized to -14 LUFS, framed 9:16 around the speaker's face (full head and headroom), hook headline, word-highlight captions, optional name tag, logo, CTA pill in the last 3 seconds and a progress bar. Options: `--layout fit` keeps the whole picture over a blurred background (best for screen shares and gallery view; `auto` chooses for you), `--style clean` for sentence-case captions on a color pill instead of bold uppercase, `--only 2` to redo one reel.
+
+Everything the user needs is at the top of the job folder:
+- `Reel 1 - <name>.mp4` ... ready to upload
+- `Reel 1 - <name>.srt` captions file, if they prefer the app's own captions
+- `captions.txt` post captions with hooks, ready to paste
+- `contact-sheet.jpg` stills from every reel
+- `report.md` automatic checks
+- `moments.json` and `working/` (transcript, cuts, old versions)
+
+## 5. Check your own work
+
+Open `contact-sheet.jpg` and LOOK at it (use your image viewing ability). Check: faces are not cut off, the headline is readable and not covering a face, captions are inside the frame. Read `report.md`: every reel should PASS length, 1080x1920, audio, loudness, captions burned in, and clean decode. If something fails, follow Self-healing below, re-render only that reel with `--only N`, and check again. Do not report a reel as done while any check fails.
+
+## 6. Premium mode (optional)
+
+A more designed "Moments" look rendered with Remotion: serif headline with an italic accent word, glowing video card, animated word-by-word caption pills, speaker name tag, CTA pill, progress bar and a logo slot, all in the user's brand color. It needs Node.js 18+ and a one-time download of about 250 MB. Offer it after the standard reels are done; only run with `--yes` after the user agrees:
+
+```
+PY "SKILL_DIR/scripts/premium.py" --out "<job folder>" --yes
+```
+
+It uses the same job folder and writes `Reel N - <name> (premium).mp4`. If Node is missing, tell the user to install the LTS version from nodejs.org, then try again. Details: [references/premium.md](references/premium.md).
+
+## 7. Tell the user
+
+In plain English: where the folder is (give the path), how many reels and why those moments, each headline, anything you could not fix, and who appears in each clip that is not the owner (they should get permission before posting). Then: "Upload the MP4 as a Reel, paste the matching caption from captions.txt, and pick a cover." Never upload or post anything yourself.
+
+## Self-healing
+
+When a command fails, fix it yourself before involving the user, within these limits:
+
+1. **Diagnose.** Read the exact error. Run `doctor`. Check `report.md` and the last lines of output.
+2. **Repair the smallest thing.** Use [references/troubleshooting.md](references/troubleshooting.md). Typical fixes: re-run `setup --yes` if a package is missing (already approved), switch `--layout fit` if faces are cut, use `--backend faster` if mlx fails, free disk space inside the job's `working/` folder only.
+3. **Re-verify.** Re-run the failed step, then `PY "SKILL_DIR/scripts/reelmaker.py" verify --out "<job>"`.
+4. **Bounded.** At most 3 attempts per problem, and never the same fix twice without new evidence. Then stop and tell the user in one line what failed, what you tried, and the one thing they can do.
+
+Safety rules that always hold:
+- Never delete or overwrite the user's files. Old renders move to `working/old/`.
+- Ask before installing anything system-wide or anything big (the setup download, premium's Node packages, a larger model). Installing inside `~/.reel-maker` after the user agreed to setup is fine.
+- Never edit PATH, shell profiles or system settings. Never use passwords, accounts or paid services. Never upload or post.
+- If you cannot see images, say the visual check still needs a human look instead of claiming it passed.
+
+## Command reference
+
+| Command | What it does |
+|---|---|
+| `doctor [--json]` | Checks the computer and prints a setup plan |
+| `setup --yes [--model small\|large-v3-turbo] [--backend mlx\|faster] [--no-faces]` | Installs tools into `~/.reel-maker` |
+| `brand --name --handle --color --accent --logo --cta-word --cta-text --font --show --reset` | Saves branding once |
+| `make INPUT [--out DIR] [--count N] [--stop-after transcribe\|find] [--transcript FILE] [--layout auto\|fill\|fit] [--style bold\|clean]` | Whole pipeline, or stop early for review |
+| `transcribe INPUT --out DIR` | Transcript with word timestamps |
+| `find --out DIR [--count N] [--force]` | Scores and shortlists moments |
+| `render --out DIR [--only N] [--layout ...] [--style ...] [--no-logo]` | Renders selected reels |
+| `verify --out DIR` | Re-runs the automatic checks |
+| `scripts/premium.py --out DIR [--yes] [--only N]` | Premium Remotion render |
+| `scripts/smoke_test.py` | Self-test on a generated sample (no downloads) |
+
+Exit codes: 0 done, 2 needs input from the user, 3 needs the user's OK to install, 4 a check failed, 1 unexpected error. The last line of `make`/`render` output starts with `RESULT` and a JSON summary.

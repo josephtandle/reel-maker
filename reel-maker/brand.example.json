@@ -1,0 +1,10 @@
+{
+  "name": "Your Name",
+  "handle": "@yourhandle",
+  "color": "#7C69C7",
+  "accent": "#B0A5DD",
+  "cta_word": "INFO",
+  "cta_text": "Comment {CTA_WORD} for the details",
+  "font": null,
+  "logo": null
+}
